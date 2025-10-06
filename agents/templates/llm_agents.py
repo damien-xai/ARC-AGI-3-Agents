@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import textwrap
+import time
 from typing import Any, Optional
 
 import openai
@@ -11,6 +12,34 @@ from ..agent import Agent
 from ..structs import FrameData, GameAction, GameState
 
 logger = logging.getLogger()
+
+
+def call_with_rate_limit_retry(func, max_retries=7, initial_delay=1.0):
+    """Call a function with exponential backoff retry on rate limit errors.
+    
+    For tokens-per-minute rate limits, we need longer waits:
+    1s → 2s → 4s → 8s → 16s → 32s → 64s (total ~2 minutes)
+    """
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except openai.RateLimitError as e:
+            if attempt == max_retries - 1:
+                logger.error(f"Rate limit exceeded after {max_retries} retries (~{sum(initial_delay * (2 ** i) for i in range(max_retries)):.0f}s total wait)")
+                raise
+            
+            # Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 64s
+            wait_time = initial_delay * (2 ** attempt)
+            logger.warning(f"⏱️  Rate limit hit (attempt {attempt + 1}/{max_retries}). Waiting {wait_time:.0f}s...")
+            logger.warning(f"   Error: {str(e)[:200]}")
+            logger.info(f"   Token limits reset per minute, so longer waits are expected...")
+            time.sleep(wait_time)
+        except Exception as e:
+            # Other exceptions should propagate immediately
+            raise
+    
+    # Should never reach here, but just in case
+    raise RuntimeError("Unexpected state in rate limit retry logic")
 
 
 class LLM(Agent):
@@ -121,7 +150,9 @@ class LLM(Agent):
                 }
                 if self.REASONING_EFFORT is not None:
                     create_kwargs["reasoning_effort"] = self.REASONING_EFFORT
-                response = client.chat.completions.create(**create_kwargs)
+                response = call_with_rate_limit_retry(
+                    lambda: client.chat.completions.create(**create_kwargs)
+                )
             except openai.BadRequestError as e:
                 logger.info(f"Message dump: {self.messages}")
                 raise e
@@ -162,26 +193,34 @@ class LLM(Agent):
             self.track_tokens(response.usage.total_tokens)
             message5 = response.choices[0].message
             logger.debug(f"... got response {message5}")
-            tool_call = message5.tool_calls[0]
-            self._latest_tool_call_id = tool_call.id
-            logger.debug(
-                f"Assistant: {tool_call.function.name} ({tool_call.id}) {tool_call.function.arguments}"
-            )
-            name = tool_call.function.name
-            arguments = tool_call.function.arguments
+            
+            # Handle case where tool_calls might be None
+            if not message5.tool_calls or len(message5.tool_calls) == 0:
+                logger.warning(f"No tool calls in response, defaulting to ACTION5")
+                name = GameAction.ACTION5.name
+                arguments = "{}"
+            else:
+                tool_call = message5.tool_calls[0]
+                self._latest_tool_call_id = tool_call.id
+                logger.debug(
+                    f"Assistant: {tool_call.function.name} ({tool_call.id}) {tool_call.function.arguments}"
+                )
+                name = tool_call.function.name
+                arguments = tool_call.function.arguments
 
             # sometimes the model will call multiple tools which isnt allowed
-            extra_tools = message5.tool_calls[1:]
-            for tc in extra_tools:
-                logger.info(
-                    "Error: assistant called more than one action, only using the first."
-                )
-                message_extra = {
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": "Error: assistant can only call one action (tool) at a time. default to only the first chosen action.",
-                }
-                self.push_message(message_extra)
+            if message5.tool_calls and len(message5.tool_calls) > 1:
+                extra_tools = message5.tool_calls[1:]
+                for tc in extra_tools:
+                    logger.info(
+                        "Error: assistant called more than one action, only using the first."
+                    )
+                    message_extra = {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": "Error: assistant can only call one action (tool) at a time. default to only the first chosen action.",
+                    }
+                    self.push_message(message_extra)
         else:
             logger.info("Sending to Assistant for action...")
             try:
@@ -193,7 +232,9 @@ class LLM(Agent):
                 }
                 if self.REASONING_EFFORT is not None:
                     create_kwargs["reasoning_effort"] = self.REASONING_EFFORT
-                response = client.chat.completions.create(**create_kwargs)
+                response = call_with_rate_limit_retry(
+                    lambda: client.chat.completions.create(**create_kwargs)
+                )
             except openai.BadRequestError as e:
                 logger.info(f"Message dump: {self.messages}")
                 raise e
@@ -213,11 +254,34 @@ class LLM(Agent):
             except Exception as e:
                 data = {}
                 logger.warning(f"JSON parsing error on LLM function response: {e}")
+                logger.warning(f"Raw arguments string: {arguments[:500]}")  # Log first 500 chars
         else:
             data = {}
 
         action = GameAction.from_name(action_id)
-        action.set_data(data)
+        
+        # Validate data before setting it
+        try:
+            action.set_data(data)
+        except Exception as e:
+            logger.error(f"Failed to set action data for {action_id}: {e}")
+            logger.error(f"Attempted data: {data}")
+            logger.error(f"Raw arguments: {arguments[:500] if arguments else 'None'}")
+            
+            # If it's a complex action that failed, try with default coordinates
+            if action.is_complex():
+                logger.warning("Attempting to use default coordinates (32, 32) for complex action")
+                try:
+                    action.set_data({"x": 32, "y": 32})
+                except Exception as fallback_error:
+                    logger.error(f"Even fallback coordinates failed: {fallback_error}")
+                    # Last resort: use a simple action instead
+                    logger.warning("Falling back to ACTION5 (safe simple action)")
+                    action = GameAction.ACTION5
+            else:
+                # For simple actions, this shouldn't happen, but log it
+                logger.error("Simple action data validation failed - this should not happen")
+        
         return action
 
     def track_tokens(self, tokens: int, message: str = "") -> None:

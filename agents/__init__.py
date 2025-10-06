@@ -12,6 +12,7 @@ from .templates.llm_agents import LLM, FastLLM, GuidedLLM, ReasoningLLM
 from .templates.random_agent import Random
 from .templates.reasoning_agent import ReasoningAgent
 from .templates.smolagents import SmolCodingAgent, SmolVisionAgent
+from .templates.grok_llm import Grok4Fast, Grok4FastNoObserve
 
 load_dotenv()
 
@@ -28,6 +29,10 @@ for rec in Recorder.list():
 # update the agent dictionary to include subclasses of LLM class
 AVAILABLE_AGENTS["reasoningagent"] = ReasoningAgent
 
+# Add Grok agents
+AVAILABLE_AGENTS["grok4fast"] = Grok4Fast
+AVAILABLE_AGENTS["grok4fastnoobserve"] = Grok4FastNoObserve
+
 __all__ = [
     "Swarm",
     "Random",
@@ -42,6 +47,8 @@ __all__ = [
     "ReasoningAgent",
     "SmolCodingAgent",
     "SmolVisionAgent",
+    "Grok4Fast",
+    "Grok4FastNoObserve",
     "Agent",
     "Recorder",
     "Playback",
