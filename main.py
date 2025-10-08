@@ -89,11 +89,18 @@ def main() -> None:
     # logging.getLogger("werkzeug").setLevel(logging.CRITICAL)
 
     parser = argparse.ArgumentParser(description="ARC-AGI-3-Agents")
+    
+    # Separate agent types from recording files for cleaner help text
+    agent_types = sorted([k for k in AVAILABLE_AGENTS.keys() if not k.endswith('.recording.jsonl')])
+    recording_files = sorted([k for k in AVAILABLE_AGENTS.keys() if k.endswith('.recording.jsonl')])
+    
     parser.add_argument(
         "-a",
         "--agent",
-        choices=AVAILABLE_AGENTS.keys(),
-        help="Choose which agent to run.",
+        # Don't use choices - we'll validate manually to control error messages
+        metavar='AGENT',
+        help=f"Choose which agent to run. Available agent types: {', '.join(agent_types)}. "
+             f"Or specify a recording file (use --list-recordings to see all).",
     )
     parser.add_argument(
         "-g",
@@ -107,11 +114,32 @@ def main() -> None:
         help="Comma-separated list of tags for the scorecard (e.g., 'experiment,v1.0')",
         default=None,
     )
+    parser.add_argument(
+        "--list-recordings",
+        action="store_true",
+        help="List all available recording files and exit",
+    )
 
     args = parser.parse_args()
+    
+    # Handle --list-recordings
+    if args.list_recordings:
+        print(f"\n📼 Available Recording Files ({len(recording_files)}):")
+        print("=" * 80)
+        for rec in recording_files:
+            print(f"  - {rec}")
+        print("\nUse with: python main.py -a <recording_name>")
+        return
 
     if not args.agent:
-        logger.error("An Agent must be specified")
+        logger.error("An Agent must be specified. Use -h for help or --list-recordings to see recordings.")
+        return
+    
+    # Validate agent choice manually (cleaner error messages)
+    if args.agent not in AVAILABLE_AGENTS:
+        logger.error(f"Invalid agent: '{args.agent}'")
+        logger.error(f"Available agent types: {', '.join(agent_types)}")
+        logger.error(f"Or use --list-recordings to see all recording files.")
         return
 
     print(f"{ROOT_URL}/api/games")

@@ -16,6 +16,11 @@
 recordings/*.recording.jsonl
 tests/recordings/*.recording.jsonl
 tests/recordings/not-a-recording.txt
+live_state/*.json
+recordings/
+visualizations/*.html
+generated_code/
+temp/
 
 # Long-term memory
 memory.db

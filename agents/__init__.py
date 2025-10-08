@@ -1,4 +1,6 @@
 from typing import Type, cast
+import sys
+import os
 
 from dotenv import load_dotenv
 
@@ -13,6 +15,27 @@ from .templates.random_agent import Random
 from .templates.reasoning_agent import ReasoningAgent
 from .templates.smolagents import SmolCodingAgent, SmolVisionAgent
 from .templates.grok_llm import Grok4Fast, Grok4FastNoObserve
+
+# Add grok-harness to path
+grok_harness_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "grok-harness", "src")
+if grok_harness_path not in sys.path:
+    sys.path.insert(0, grok_harness_path)
+
+# Import GrokHarnessAgent
+try:
+    from grok_harness.integration.arc_agi_adapter import GrokHarnessAgent
+    GROK_HARNESS_AVAILABLE = True
+except ImportError:
+    GrokHarnessAgent = None  # type: ignore
+    GROK_HARNESS_AVAILABLE = False
+
+# Import SelfImprovingAgent
+try:
+    from src.integration.arc_adapter import ARCAdapter as SelfImprovingAgent
+    SELFIMPROVING_AVAILABLE = True
+except ImportError:
+    SelfImprovingAgent = None  # type: ignore
+    SELFIMPROVING_AVAILABLE = False
 
 load_dotenv()
 
@@ -32,6 +55,14 @@ AVAILABLE_AGENTS["reasoningagent"] = ReasoningAgent
 # Add Grok agents
 AVAILABLE_AGENTS["grok4fast"] = Grok4Fast
 AVAILABLE_AGENTS["grok4fastnoobserve"] = Grok4FastNoObserve
+
+# Add GrokHarnessAgent
+if GROK_HARNESS_AVAILABLE and GrokHarnessAgent:
+    AVAILABLE_AGENTS["grokharness"] = GrokHarnessAgent
+
+# Add SelfImprovingAgent
+if SELFIMPROVING_AVAILABLE and SelfImprovingAgent:
+    AVAILABLE_AGENTS["selfimproving"] = SelfImprovingAgent
 
 __all__ = [
     "Swarm",
